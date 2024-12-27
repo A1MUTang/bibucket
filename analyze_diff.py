@@ -4,19 +4,31 @@ import subprocess
 import requests
 
 # 配置日志记录
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
-)
+def setup_logging():
+    """设置日志格式和输出到控制台"""
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)  # 设置最低日志级别
+
+    console_handler = logging.StreamHandler()  # 创建控制台处理器
+    console_handler.setLevel(logging.DEBUG)
+
+    # 定义日志格式
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+
+    # 添加处理器到日志记录器
+    logger.addHandler(console_handler)
+
+setup_logging()
 
 def run_command(command):
     """运行 shell 命令并记录输出和错误"""
     try:
         logging.info(f"Running command: {command}")
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        logging.debug(f"Command output: {result.stdout}")
-        if result.stderr:
-            logging.error(f"Command error: {result.stderr}")
+        logging.debug(f"Command output: {result.stdout.strip()}")
+        if result.stderr.strip():
+            logging.error(f"Command error: {result.stderr.strip()}")
         return result
     except Exception as e:
         logging.error(f"Failed to run command {command}: {e}")
@@ -63,7 +75,6 @@ def main():
     # 添加反馈到 Pull Request
     try:
         logging.info("Adding Dify feedback to Pull Request...")
-        # 示例添加反馈逻辑，需替换为实际实现
         pr_response = requests.post(
             f"{env_vars['GIT_URL']}/comments",
             json={"body": response.get("feedback")},
