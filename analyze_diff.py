@@ -1,89 +1,80 @@
-import logging
 import os
-import subprocess
+import sys
 import requests
+import logging
 
-# 配置日志记录
-def setup_logging():
-    """设置日志格式和输出到控制台"""
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)  # 设置最低日志级别
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    console_handler = logging.StreamHandler()  # 创建控制台处理器
-    console_handler.setLevel(logging.DEBUG)
-
-    # 定义日志格式
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-
-    # 添加处理器到日志记录器
-    logger.addHandler(console_handler)
-
-setup_logging()
-
-def run_command(command):
-    """运行 shell 命令并记录输出和错误"""
+def main(diff_file):
     try:
-        logging.info(f"Running command: {command}")
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        logging.debug(f"Command output: {result.stdout.strip()}")
-        if result.stderr.strip():
-            logging.error(f"Command error: {result.stderr.strip()}")
-        return result
+        # Read the code diff from the file
+        logging.info("Reading the code diff from file: %s", diff_file)
+        with open(diff_file, "r") as file:
+            code_diff = file.read()
+        logging.info("Successfully read the code diff.")
+
+        # Define the Dify API URL and headers
+        url = "https://aiop-test.item.com/v1/chat-messages"
+        headers = {
+            "Authorization": "Bearer app-npWE2itifhPtymIPOwWmHYRM",
+            "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+        }
+
+        # Prepare the payload
+        data = {
+            "inputs": {"code_diff": code_diff},
+            "query": "Analyze this code diff and provide feedback.",
+            "response_mode": "streaming",
+            "conversation_id": "",
+            "user": "abc-123",
+            "files": [
+                {
+                    "type": "image",
+                    "transfer_method": "remote_url",
+                    "url": "https://cloud.dify.ai/logo/logo-site.png",
+                }
+            ],
+        }
+
+        logging.info("Sending request to Dify...")
+        response = requests.post(url, headers=headers, json=data)
+
+        # Log the response from Dify
+        logging.info("Response received from Dify:")
+        logging.info(response.text)
+
+        # Check for authorization failure
+        if "unauthorized" in response.text:
+            logging.error("Authorization failed. Please check the DIFY_API_KEY.")
+            sys.exit(1)
+
+        # Prepare to add feedback to the PR
+        bitbucket_url = f"https://api.bitbucket.org/2.0/repositories/{os.getenv('BITBUCKET_WORKSPACE')}/{os.getenv('BITBUCKET_REPO_SLUG')}/pullrequests/{os.getenv('BITBUCKET_PR_ID')}/comments"
+        bitbucket_auth = (os.getenv('BITBUCKET_USER'), os.getenv('BITBUCKET_APP_PASSWORD'))
+        bitbucket_headers = {"Content-Type": "application/json"}
+        bitbucket_payload = {
+            "content": {
+                "raw": f"Dify Feedback: {response.text}"
+            }
+        }
+
+        logging.info("Adding feedback to Bitbucket PR...")
+        bitbucket_response = requests.post(bitbucket_url, auth=bitbucket_auth, headers=bitbucket_headers, json=bitbucket_payload)
+
+        # Log the Bitbucket API response
+        logging.info("Response received from Bitbucket:")
+        logging.info(bitbucket_response.text)
+
     except Exception as e:
-        logging.error(f"Failed to run command {command}: {e}")
-        raise
-
-def fetch_environment_variables():
-    """记录环境变量"""
-    logging.info("Fetching environment variables...")
-    env_vars = {key: os.environ.get(key) for key in ['GIT_TOKEN', 'GIT_URL', 'DIFFY_API_URL', 'DIFFY_API_TOKEN']}
-    logging.debug(f"Environment variables: {env_vars}")
-    return env_vars
-
-def send_request_to_dify(api_url, diff, headers):
-    """发送 diff 到 Dify 并记录请求/响应"""
-    try:
-        logging.info("Sending code diff to Dify...")
-        response = requests.post(api_url, json=diff, headers=headers)
-        logging.debug(f"Dify Response Status Code: {response.status_code}")
-        logging.debug(f"Dify Response: {response.text}")
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logging.error(f"Failed to send request to Dify: {e}")
-        raise
-
-def main():
-    # 记录运行环境
-    env_vars = fetch_environment_variables()
-
-    # 拉取代码库和目标分支
-    run_command("git fetch --all")
-    run_command("git fetch origin dev")
-
-    # 生成代码 diff
-    diff_command = "git diff --unified=0 origin/dev..origin/feature/addUnisBaseCharge"
-    diff_result = run_command(diff_command)
-    diff = diff_result.stdout
-
-    # 构造 Dify 请求
-    api_url = env_vars['DIFFY_API_URL']
-    headers = {'Authorization': f"Bearer {env_vars['DIFFY_API_TOKEN']}"}
-    response = send_request_to_dify(api_url, {'diff': diff}, headers)
-
-    # 添加反馈到 Pull Request
-    try:
-        logging.info("Adding Dify feedback to Pull Request...")
-        pr_response = requests.post(
-            f"{env_vars['GIT_URL']}/comments",
-            json={"body": response.get("feedback")},
-            headers={"Authorization": f"token {env_vars['GIT_TOKEN']}"}
-        )
-        pr_response.raise_for_status()
-        logging.info("Feedback successfully added to Pull Request.")
-    except requests.RequestException as e:
-        logging.error(f"Failed to post comment: {e}")
+        logging.error("An error occurred: %s", str(e))
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        logging.error("Usage: python analyze_diff.py <diff_file>")
+        sys.exit(1)
+    
+    main(sys.argv[1])
